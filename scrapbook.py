@@ -12,6 +12,7 @@ class Coord:
     lat: float
     lng: float
 
+# Calculates the distance of two locations on the Earth.
 def distance(a, b):
   a_lat = radians(a.lat)
   b_lat = radians(b.lat)
@@ -35,6 +36,7 @@ class CompoundPoly:
   include: List[Coord]
   exclude: Optional[List[Coord]]
 
+# Represents a government planning zone.
 @dataclass
 class Zone:
     code: str
@@ -98,6 +100,7 @@ aus_outer_poly = [
     Coord(-38.27109365808601, 139.80296831843887),
 ]
 
+# The outline of Australia
 aus_poly = [
   Coord(-34.01300680685471, 115.12267301075781),
   Coord(-33.20785104534772, 115.91368858045824),
@@ -157,6 +160,7 @@ aus_poly = [
   Coord(-34.28336356619469, 115.15439068108138),
 ]
 
+# The outline of Victoria
 vic_poly = [
     Coord(-33.97968861611904, 140.96285676935724),
     Coord(-38.062067198085686, 140.97063036272135),
@@ -213,6 +217,7 @@ vic_poly = [
     Coord(-34.03927927949678, 141.0034792390087),
 ]
 
+# Returns whether a location is in Australia.
 def inside_aus(point: Coord) -> bool:
   if inside_poly(aus_inner_poly, point):
     return True
@@ -220,6 +225,7 @@ def inside_aus(point: Coord) -> bool:
     return False
   return inside_poly(aus_poly, point)
 
+# Returns whether a location is in Victoria.
 def inside_vic(point: Coord) -> bool:
   if not inside_poly(aus_outer_poly, point):
     return False
@@ -232,20 +238,21 @@ def normalise_closeness_score(min, max, x):
     return 0
   return (max-x)/(max-min)
 
-with open('submarine-cables.json') as f:
+with open('datasets/submarine-cables.json') as f:
   submarine_cables = json.load(f)
 print(f'submarine_cables {len(submarine_cables["features"])}')
 
-with open('Major_Power_Stations.json') as f:
+with open('datasets/major-power-stations.json') as f:
   power_stations = json.load(f)
 print(f'power_stations {len(power_stations["features"])}')
 
-with open('VicZones.json') as f:
+with open('datasets/vic-zones.json') as f:
   zones = json.load(f)
 print(f'zones {len(zones["features"])}')
 # print('zone 0')
 # print(zones["features"][0]) 
 
+# Zones good for datacentre construction.
 zone_include_list = {
     'IN2Z', 'IN3Z', 'IN1Z',
     # Farming
@@ -254,6 +261,7 @@ zone_include_list = {
     'GWZ',
 }
 
+# Zones inappropriate for datacentre construction.
 zone_exclude_list = {
     # General residential
     'GRZ', 'GRZ1', 'GRZ2', 'GRZ3', 'GRZ4', 'GRZ5', 'GRZ6', 'GRZ7', 'GRZ8', 'GRZ9', 'GRZ10',
@@ -281,24 +289,29 @@ def inside_bbox(point, bbox):
 def inside_any_zone(point):
     return any(inside_bbox(point, zone['geometry']['bbox']) for zone in zones['features'])
 
+# Returns whether a location is within an inappropriate planning zone.
 def inside_excluded_zone(point):
     return any( \
         inside_bbox(point, zone.bbox) \
         and any(inside_poly(poly.include, point) for poly in zone.polys) \
         for zone in exclude_zones)
 
+# Returns whether a location is within a good planning zone.
 def inside_included_zone(point):
     return any( \
         inside_bbox(point, zone.bbox) \
         and any(inside_poly(poly.include, point) for poly in zone.polys) \
         for zone in include_zones)
 
+# Returns the distance from a location to the nearest power station.
 def distance_to_station(lat, lng):
     return min(distance(Coord(lat, lng), Coord(station['geometry']['coordinates'][1], station['geometry']['coordinates'][0])) for station in power_stations['features'])
 
+# Returns how many megawatts of power generation are within the a given radius of a location.
 def mw_within_radius(point, radius):
   return sum(station['properties']['generationmw'] for station in power_stations['features'] if distance(point, Coord(station['geometry']['coordinates'][1], station['geometry']['coordinates'][0])) <= radius and station['properties']['generationmw'] is not None)
 
+# Names of international cables that have terminals in Australia.
 relevant_cable_ids = [
     'australia-singapore-cable-asc',
     'indigo-west',
@@ -316,9 +329,16 @@ relevant_cable_ids = [
 ]
 relevant_cables = [cable for cable in submarine_cables['features'] if cable['properties']['id'] in relevant_cable_ids]
 
+# Returns the distance to the nearest submarine cable.
 def distance_to_cable(lat, lng):
   return min(distance(Coord(lat, lng), Coord(point[1], point[0])) for cable in relevant_cables for line in cable['geometry']['coordinates'] for point in line)
 
+# Generates a rating for a location.
+# If the point is outside victoria, it is currently excluded, because I don't
+# have zoning data. If the point is in a residential neighbourhood, or in a
+# park or conservation area, it scores 0. Points are rated higher for being
+# close to subsea cables, and power stations. The point receives the maximum
+# score if it is within 30 kilometres of both a cable and a power station.
 def rating(lat, lng):
   if not inside_vic(Coord(lat, lng)):
     return nan
@@ -331,6 +351,7 @@ def rating(lat, lng):
   mw_comp = normalise_closeness_score(30, 100, distance_to_station(lat, lng)/1000)
   return subsea_comp + mw_comp
 
+# Code below this point generates the plot and saves it to a file.
 print('plotting')
 
 x = np.linspace(140, 151.5, 150)
@@ -341,10 +362,10 @@ lngs, lats = np.meshgrid(x, y)
 
 print('rasterising')
 t0 = time.perf_counter()
-# Calculate the value for each point based on x*y
+# Calculate the value for each point based on the rating function.
 Z = np.vectorize(rating)(lats, lngs)
 t1 = time.perf_counter()
-print(f'finished rasterising {t1-t0}')
+print(f'Finished rasterising in {t1-t0} cpu seconds.')
 
 print('plotting')
 plt.figure(figsize=(12, 9))
